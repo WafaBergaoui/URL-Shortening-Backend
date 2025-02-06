@@ -2,28 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { UrlService } from './url.service';
 import { getModelToken } from '@nestjs/mongoose';
 import { Url } from './url.schema';
+import { Model } from 'mongoose';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import * as shortid from 'shortid';
-
-// Mock shortid
-jest.mock('shortid', () => ({
-  generate: jest.fn(() => 'mockShortId'), // Always return 'mockShortId'
-}));
-
-class MockUrlModel {
-  longUrl: string;
-  shortId: string;
-  save = jest.fn().mockResolvedValue(this); // Mock save method
-
-  constructor(data: Partial<Url>) {
-    this.longUrl = data.longUrl;
-    this.shortId = data.shortId;
-  }
-
-  static findOne = jest.fn(); // Mock findOne as a static method
-}
 
 describe('UrlService', () => {
   let service: UrlService;
+  let urlModel: Model<Url>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -31,54 +16,74 @@ describe('UrlService', () => {
         UrlService,
         {
           provide: getModelToken(Url.name),
-          useValue: MockUrlModel, // Use the mock class
+          useValue: {
+            findOne: jest.fn(),
+            create: jest.fn(),
+            prototype: {
+              save: jest.fn(),
+            },
+          },
         },
       ],
     }).compile();
 
     service = module.get<UrlService>(UrlService);
+    urlModel = module.get<Model<Url>>(getModelToken(Url.name));
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
 
-  it('should shorten a URL', async () => {
-    const longUrl = 'https://example.com';
+  describe('shortenUrl', () => {
+    it('should generate a short URL', async () => {
+      const longUrl = 'https://example.com';
+      const shortId = shortid.generate();
 
-    // Create a mock instance and spy on its save method
-    const mockInstance = new MockUrlModel({ longUrl, shortId: 'mockShortId' });
-    jest.spyOn(mockInstance, 'save');
+      // Mock the `findOne` method to return null (no existing URL)
+      jest.spyOn(urlModel, 'findOne').mockResolvedValue(null);
 
-    // Mock the constructor to return the mock instance
-    jest.spyOn(MockUrlModel.prototype, 'constructor').mockImplementation(() => mockInstance);
+      // Mock the `save` method for the new URL instance
+      const mockSave = jest.fn().mockResolvedValue({ longUrl, shortId });
+      jest.spyOn(urlModel.prototype, 'save').mockImplementation(mockSave);
 
-    // Call the service method
-    const result = await service.shortenUrl(longUrl);
+      const result = await service.shortenUrl(longUrl);
+      expect(result).toBe(shortId);
+      expect(urlModel.findOne).toHaveBeenCalledWith({ shortId });
+      expect(mockSave).toHaveBeenCalled();
+    });
 
-    // Assertions
-    expect(result).toBe('mockShortId');
-    expect(mockInstance.save).toHaveBeenCalled(); // Ensure save is called
+    it('should throw BadRequestException if custom name is taken', async () => {
+      const longUrl = 'https://example.com';
+      const customName = 'taken';
+
+      // Mock the `findOne` method to return an existing URL
+      jest.spyOn(urlModel, 'findOne').mockResolvedValue({ longUrl, shortId: customName } as Url);
+
+      await expect(service.shortenUrl(longUrl, customName)).rejects.toThrow(BadRequestException);
+    });
   });
 
+  describe('getOriginalUrl', () => {
+    it('should return the original URL', async () => {
+      const shortId = 'abc123';
+      const longUrl = 'https://example.com';
 
-  it('should get the original URL', async () => {
-    const shortId = 'mockShortId';
-    const longUrl = 'https://example.com';
+      // Mock the `findOne` method to return a URL document
+      jest.spyOn(urlModel, 'findOne').mockResolvedValue({ longUrl, shortId } as Url);
 
-    MockUrlModel.findOne.mockResolvedValueOnce({ longUrl });
+      const result = await service.getOriginalUrl(shortId);
+      expect(result).toBe(longUrl);
+      expect(urlModel.findOne).toHaveBeenCalledWith({ shortId });
+    });
 
-    const result = await service.getOriginalUrl(shortId);
+    it('should throw NotFoundException if shortId is invalid', async () => {
+      const shortId = 'invalid';
 
-    expect(result).toBe(longUrl);
-    expect(MockUrlModel.findOne).toHaveBeenCalledWith({ shortId });
-  });
+      // Mock the `findOne` method to return null (URL not found)
+      jest.spyOn(urlModel, 'findOne').mockResolvedValue(null);
 
-  it('should throw an error if shortId is not found', async () => {
-    MockUrlModel.findOne.mockResolvedValueOnce(null);
-
-    await expect(service.getOriginalUrl('nonexistentId')).rejects.toThrow(
-      'URL not found',
-    );
+      await expect(service.getOriginalUrl(shortId)).rejects.toThrow(NotFoundException);
+    });
   });
 });

@@ -4,4 +4,5 @@ export class CreateUrlDto {
   @IsNotEmpty()
   @IsUrl()
   longUrl: string;
+  customName?: string;
 }

@@ -5,11 +5,9 @@ import { UrlController } from './url.controller';
 import { Url, UrlSchema } from './url.schema';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: Url.name, schema: UrlSchema }]), // Register the schema
-  ],
+  imports: [MongooseModule.forFeature([{ name: Url.name, schema: UrlSchema }])],
   controllers: [UrlController],
   providers: [UrlService],
-  exports: [UrlService], // Export the service if it's needed elsewhere
+  exports: [UrlService],
 })
 export class UrlModule {}
